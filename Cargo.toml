@@ -3,6 +3,9 @@ name = "gpui-terminal"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Terminal emulator component for gpui"
+repository = "https://github.com/zortax/gpui-terminal"
+authors = ["Leonard Seibold <git[@]zrtx.de"]
 
 [dependencies]
 gpui = "0.2.2"
