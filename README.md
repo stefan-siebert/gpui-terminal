@@ -1,8 +1,8 @@
 # gpui-terminal
 
-<!-- screenshot -->
-
 A terminal emulator component for [GPUI](https://gpui.rs) applications. Uses [alacritty_terminal](https://docs.rs/alacritty_terminal) for VTE parsing.
+
+<img width="1763" alt="Image" src="https://github.com/user-attachments/assets/713ed2b3-e08d-4ff5-8aeb-2d02660ecf7d" />
 
 ## Features
 
