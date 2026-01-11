@@ -1,4 +1,5 @@
 # gpui-terminal
+![Crates.io Version](https://img.shields.io/crates/v/gpui-terminal?logo=rust)
 
 A terminal emulator component for [GPUI](https://gpui.rs) applications. Uses [alacritty_terminal](https://docs.rs/alacritty_terminal) for VTE parsing.
 
