@@ -124,7 +124,7 @@ use LineWeight::*;
 #[inline]
 pub fn is_box_drawing_char(ch: char) -> bool {
     let code = ch as u32;
-    code >= 0x2500 && code <= 0x257F
+    (0x2500..=0x257F).contains(&code)
 }
 
 /// Returns the horizontal line weight if the character has a continuous horizontal line
@@ -162,7 +162,7 @@ pub fn extends_right(ch: char) -> bool {
 /// Returns `None` if the character is not a recognized box-drawing character.
 pub fn get_box_segments(ch: char) -> Option<BoxSegments> {
     let code = ch as u32;
-    if code < 0x2500 || code > 0x257F {
+    if !(0x2500..=0x257F).contains(&code) {
         return None;
     }
 
@@ -357,7 +357,7 @@ pub fn get_box_segments(ch: char) -> Option<BoxSegments> {
 #[inline]
 fn is_rounded_corner(ch: char) -> bool {
     let code = ch as u32;
-    code >= 0x256D && code <= 0x2570
+    (0x256D..=0x2570).contains(&code)
 }
 
 /// Draws a horizontal line spanning multiple cells.

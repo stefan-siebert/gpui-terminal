@@ -71,7 +71,7 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::Color;
 use gpui::{
     App, Bounds, Edges, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point,
-    SharedString, Size, TextRun, UnderlineStyle, Window, px, quad, transparent_black,
+    SharedString, Size, TextAlign, TextRun, UnderlineStyle, Window, px, quad, transparent_black,
 };
 
 /// A batched run of text with consistent styling.
@@ -710,7 +710,7 @@ impl TerminalRenderer {
                         .shape_line(text, self.font_size, &[text_run], None);
 
                 // Paint at exact cell position (ignore errors)
-                let _ = shaped_line.paint(Point { x, y }, self.cell_height, window, _cx);
+                let _ = shaped_line.paint(Point { x, y }, self.cell_height, TextAlign::Left, None, window, _cx);
             }
         }
 

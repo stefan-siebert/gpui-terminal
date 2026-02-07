@@ -8,14 +8,15 @@ repository = "https://github.com/zortax/gpui-terminal"
 authors = ["Leonard Seibold <git[@]zrtx.de"]
 
 [dependencies]
-gpui = "0.2.2"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "52c963df1d5db578e713f0435d66910cd2001090" }
 alacritty_terminal = "0.25.1"
 anyhow = "1"
-portable-pty = "0.9"
-ropey = "1"
 parking_lot = "0.12"
 flume = "0.12"
 
 [dependencies.arboard]
 version = "3"
 features = ["wayland-data-control"]
+
+[dev-dependencies]
+portable-pty = "0.9"

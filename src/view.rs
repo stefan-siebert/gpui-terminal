@@ -740,7 +740,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         // Request focus when clicking the terminal
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
 
         // TODO: Implement mouse selection
