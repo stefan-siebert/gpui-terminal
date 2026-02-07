@@ -8,7 +8,7 @@ repository = "https://github.com/zortax/gpui-terminal"
 authors = ["Leonard Seibold <git[@]zrtx.de"]
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "52c963df1d5db578e713f0435d66910cd2001090" }
+gpui = { git = "https://github.com/zed-industries/zed" }
 alacritty_terminal = "0.25.1"
 anyhow = "1"
 parking_lot = "0.12"
