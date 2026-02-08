@@ -411,6 +411,9 @@ pub struct TerminalView {
 
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
+
+    /// Last CWD reported via OSC 7 escape sequence
+    reported_cwd: Option<String>,
 }
 
 impl TerminalView {
@@ -498,6 +501,10 @@ impl TerminalView {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             view.state.process_bytes(&bytes);
+                            // Scan for OSC 7 CWD reporting sequences
+                            if let Some(cwd) = Self::extract_osc7_path(&bytes) {
+                                view.reported_cwd = Some(cwd);
+                            }
                             cx.notify();
                         });
                         if result.is_err() {
@@ -532,6 +539,7 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
+            reported_cwd: None,
         }
     }
 
@@ -869,6 +877,63 @@ impl TerminalView {
     /// A reference to the focus handle.
     pub fn focus_handle(&self) -> &FocusHandle {
         &self.focus_handle
+    }
+
+    /// Write raw bytes to the terminal's PTY stdin.
+    pub fn write_to_pty(&self, data: &[u8]) -> std::io::Result<()> {
+        let mut writer = self.stdin_writer.lock();
+        writer.write_all(data)?;
+        writer.flush()
+    }
+
+    /// Take the last CWD reported via OSC 7, clearing it.
+    pub fn take_reported_cwd(&mut self) -> Option<String> {
+        self.reported_cwd.take()
+    }
+
+    /// Extract a path from an OSC 7 escape sequence in a byte buffer.
+    ///
+    /// OSC 7 format: `\x1b]7;file://HOST/PATH\x1b\\` or `\x1b]7;file://HOST/PATH\x07`
+    fn extract_osc7_path(bytes: &[u8]) -> Option<String> {
+        // Look for ESC ] 7 ; pattern
+        let marker = b"\x1b]7;";
+        let start = bytes.windows(marker.len()).position(|w| w == marker)?;
+        let url_start = start + marker.len();
+        let remaining = &bytes[url_start..];
+
+        // Find terminator: ST (\x1b\\) or BEL (\x07)
+        let url_end = remaining.iter().position(|&b| b == b'\x07' || b == b'\x1b')?;
+        let url = std::str::from_utf8(&remaining[..url_end]).ok()?;
+
+        // Parse file:// URL - extract path after hostname
+        let path_part = url.strip_prefix("file://")?;
+        // Skip hostname (everything up to the next /)
+        let path = if let Some(slash_pos) = path_part.find('/') {
+            &path_part[slash_pos..]
+        } else {
+            return None;
+        };
+
+        // URL-decode the path
+        Some(Self::url_decode(path))
+    }
+
+    /// Simple percent-decoding for file paths.
+    fn url_decode(input: &str) -> String {
+        let mut result = String::with_capacity(input.len());
+        let mut chars = input.bytes();
+        while let Some(b) = chars.next() {
+            if b == b'%' {
+                let hi = chars.next().and_then(|c| (c as char).to_digit(16));
+                let lo = chars.next().and_then(|c| (c as char).to_digit(16));
+                if let (Some(h), Some(l)) = (hi, lo) {
+                    result.push((h * 16 + l) as u8 as char);
+                }
+            } else {
+                result.push(b as char);
+            }
+        }
+        result
     }
 
     /// Update the terminal configuration.
