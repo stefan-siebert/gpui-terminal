@@ -323,6 +323,171 @@ pub type ClipboardStoreCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalV
 /// ```
 pub type ExitCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>)>;
 
+/// Callback for working directory changes reported by OSC 7 escape sequences.
+///
+/// This callback is invoked when the terminal reports a working directory change
+/// via the OSC 7 escape sequence (`\e]7;file:///path\a`). Shells can be configured
+/// to emit this on every prompt, enabling bidirectional directory synchronization.
+///
+/// # Arguments
+///
+/// * `window` - The GPUI window
+/// * `cx` - The context for the TerminalView
+/// * `path` - The new working directory path
+pub type DirectoryCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>, &str)>;
+
+/// State machine for scanning OSC 7 escape sequences from a byte stream.
+///
+/// OSC 7 sequences have the form: `\x1b]7;file://hostname/path\x07` (BEL terminator)
+/// or `\x1b]7;file://hostname/path\x1b\\` (ST terminator).
+///
+/// The scanner is stateful to handle sequences split across byte chunks.
+#[derive(Debug, Clone)]
+pub struct Osc7Scanner {
+    state: Osc7State,
+    payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Osc7State {
+    Normal,
+    Esc,          // saw \x1b
+    OscBracket,   // saw \x1b]
+    Digit7,       // saw \x1b]7
+    Payload,      // collecting payload after ;
+    PayloadEsc,   // saw \x1b inside payload (potential ST terminator)
+}
+
+impl Default for Osc7Scanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Osc7Scanner {
+    pub fn new() -> Self {
+        Self {
+            state: Osc7State::Normal,
+            payload: Vec::new(),
+        }
+    }
+
+    /// Scan a byte chunk for OSC 7 sequences. Returns extracted paths.
+    pub fn scan(&mut self, data: &[u8]) -> Vec<String> {
+        let mut results = Vec::new();
+        for &byte in data {
+            match self.state {
+                Osc7State::Normal => {
+                    if byte == 0x1b {
+                        self.state = Osc7State::Esc;
+                    }
+                }
+                Osc7State::Esc => {
+                    if byte == b']' {
+                        self.state = Osc7State::OscBracket;
+                    } else {
+                        self.state = Osc7State::Normal;
+                    }
+                }
+                Osc7State::OscBracket => {
+                    if byte == b'7' {
+                        self.state = Osc7State::Digit7;
+                    } else {
+                        self.state = Osc7State::Normal;
+                    }
+                }
+                Osc7State::Digit7 => {
+                    if byte == b';' {
+                        self.state = Osc7State::Payload;
+                        self.payload.clear();
+                    } else {
+                        self.state = Osc7State::Normal;
+                    }
+                }
+                Osc7State::Payload => {
+                    if byte == 0x07 {
+                        // BEL terminator
+                        if let Some(path) = self.extract_path() {
+                            results.push(path);
+                        }
+                        self.state = Osc7State::Normal;
+                    } else if byte == 0x1b {
+                        self.state = Osc7State::PayloadEsc;
+                    } else {
+                        self.payload.push(byte);
+                    }
+                }
+                Osc7State::PayloadEsc => {
+                    if byte == b'\\' {
+                        // ST terminator (\x1b\\)
+                        if let Some(path) = self.extract_path() {
+                            results.push(path);
+                        }
+                        self.state = Osc7State::Normal;
+                    } else {
+                        // False alarm, not a ST terminator
+                        self.payload.push(0x1b);
+                        self.payload.push(byte);
+                        self.state = Osc7State::Payload;
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Extract path from the accumulated payload.
+    /// Payload is expected to be a URI like `file://hostname/path`.
+    fn extract_path(&self) -> Option<String> {
+        let payload = String::from_utf8_lossy(&self.payload);
+        // Parse file:// URI
+        if let Some(rest) = payload.strip_prefix("file://") {
+            // Skip hostname (everything up to the first / after file://)
+            if let Some(slash_pos) = rest.find('/') {
+                let path = &rest[slash_pos..];
+                // Percent-decode the path
+                let decoded = percent_decode(path);
+                if !decoded.is_empty() {
+                    return Some(decoded);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Simple percent-decoding for file paths (handles %XX sequences).
+fn percent_decode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let hi = chars.next();
+            let lo = chars.next();
+            if let (Some(hi), Some(lo)) = (hi, lo)
+                && let (Some(hi_val), Some(lo_val)) = (hex_val(hi), hex_val(lo))
+            {
+                result.push((hi_val << 4 | lo_val) as char);
+                continue;
+            }
+            // Malformed, pass through
+            result.push('%');
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// The main terminal view component for GPUI applications.
 ///
 /// `TerminalView` is a GPUI entity that implements the [`Render`] trait,
@@ -412,8 +577,11 @@ pub struct TerminalView {
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
 
-    /// Last CWD reported via OSC 7 escape sequence
-    reported_cwd: Option<String>,
+    /// Callback for working directory changes (OSC 7)
+    directory_callback: Option<DirectoryCallback>,
+
+    /// Last working directory reported via OSC 7 (observable by parent views)
+    last_reported_cwd: Option<String>,
 }
 
 impl TerminalView {
@@ -455,8 +623,9 @@ impl TerminalView {
         // Create event channel for terminal events
         let (event_tx, event_rx) = mpsc::channel();
 
-        // Clone event_tx for the reader task to send Exit event when PTY closes
+        // Clone event_tx for the reader task to send Exit and WorkingDirectory events
         let exit_event_tx = event_tx.clone();
+        let osc7_event_tx = event_tx.clone();
 
         // Create event proxy for alacritty
         let event_proxy = GpuiEventProxy::new(event_tx);
@@ -485,6 +654,10 @@ impl TerminalView {
         // and properly wakes GPUI's async executor when data arrives
         let (bytes_tx, bytes_rx) = flume::unbounded::<Vec<u8>>();
 
+        // OSC 7 scanner shared with the reader task
+        let osc7_scanner = Arc::new(parking_lot::Mutex::new(Osc7Scanner::new()));
+        let osc7_for_reader = osc7_scanner.clone();
+
         // Spawn background thread to read from stdout
         // This thread sends bytes through the async channel
         thread::spawn(move || {
@@ -498,8 +671,18 @@ impl TerminalView {
                 // Wait for bytes from the background reader (blocks until data arrives)
                 match bytes_rx.recv_async().await {
                     Ok(bytes) => {
+                        // Scan for OSC 7 sequences before processing
+                        let paths = osc7_for_reader.lock().scan(&bytes);
+                        for path in &paths {
+                            let _ = osc7_event_tx.send(TerminalEvent::WorkingDirectory(path.clone()));
+                        }
+
                         // Process bytes and notify the view
+                        // Store detected CWD directly so observers fire immediately
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                            if let Some(path) = paths.into_iter().last() {
+                                view.last_reported_cwd = Some(path);
+                            }
                             view.state.process_bytes(&bytes);
                             // Scan for OSC 7 CWD reporting sequences
                             if let Some(cwd) = Self::extract_osc7_path(&bytes) {
@@ -539,7 +722,8 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
-            reported_cwd: None,
+            directory_callback: None,
+            last_reported_cwd: None,
         }
     }
 
@@ -683,6 +867,43 @@ impl TerminalView {
     ) -> Self {
         self.exit_callback = Some(Box::new(callback));
         self
+    }
+
+    /// Set a callback to be invoked when the terminal working directory changes.
+    ///
+    /// This callback is triggered by OSC 7 escape sequences, which shells can
+    /// emit on every prompt to report their current working directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A function that will be called with the new directory path
+    pub fn with_directory_callback(
+        mut self,
+        callback: impl Fn(&mut Window, &mut Context<TerminalView>, &str) + 'static,
+    ) -> Self {
+        self.directory_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Take the last reported working directory (OSC 7), if any.
+    ///
+    /// This returns and clears the stored CWD. Use this from an observer
+    /// on the TerminalView entity to react to directory changes.
+    pub fn take_reported_cwd(&mut self) -> Option<String> {
+        self.last_reported_cwd.take()
+    }
+
+    /// Write data to the terminal's PTY stdin.
+    ///
+    /// This can be used to send commands or input to the terminal process.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The bytes to write to the PTY
+    pub fn write_to_pty(&self, data: &[u8]) -> std::io::Result<()> {
+        let mut writer = self.stdin_writer.lock();
+        writer.write_all(data)?;
+        writer.flush()
     }
 
     /// Background thread that reads from stdout.
@@ -833,6 +1054,11 @@ impl TerminalView {
                 TerminalEvent::Exit => {
                     if let Some(ref callback) = self.exit_callback {
                         callback(window, cx);
+                    }
+                }
+                TerminalEvent::WorkingDirectory(path) => {
+                    if let Some(ref callback) = self.directory_callback {
+                        callback(window, cx, &path);
                     }
                 }
             }

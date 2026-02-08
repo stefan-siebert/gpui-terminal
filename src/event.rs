@@ -69,6 +69,9 @@ pub enum TerminalEvent {
 
     /// The terminal process has exited.
     Exit,
+
+    /// The terminal reported a working directory change (OSC 7).
+    WorkingDirectory(String),
 }
 
 /// An event proxy that implements alacritty's EventListener trait.
