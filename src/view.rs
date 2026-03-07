@@ -686,7 +686,7 @@ impl TerminalView {
                             view.state.process_bytes(&bytes);
                             // Scan for OSC 7 CWD reporting sequences
                             if let Some(cwd) = Self::extract_osc7_path(&bytes) {
-                                view.reported_cwd = Some(cwd);
+                                view.last_reported_cwd = Some(cwd);
                             }
                             cx.notify();
                         });
@@ -917,7 +917,6 @@ impl TerminalView {
         bytes_tx: flume::Sender<Vec<u8>>,
     ) {
         let mut buffer = [0u8; 4096];
-
         loop {
             match stdout_reader.read(&mut buffer) {
                 Ok(0) => {
@@ -1051,6 +1050,11 @@ impl TerminalView {
                     // Terminal wants to load data from clipboard
                     // TODO: Implement clipboard integration
                 }
+                TerminalEvent::PtyWrite(data) => {
+                    // Write response data back to the PTY (e.g. DSR cursor position report).
+                    // Without this, ConPTY on Windows blocks waiting for the response.
+                    self.write_to_pty(data.as_bytes()).ok();
+                }
                 TerminalEvent::Exit => {
                     if let Some(ref callback) = self.exit_callback {
                         callback(window, cx);
@@ -1105,17 +1109,6 @@ impl TerminalView {
         &self.focus_handle
     }
 
-    /// Write raw bytes to the terminal's PTY stdin.
-    pub fn write_to_pty(&self, data: &[u8]) -> std::io::Result<()> {
-        let mut writer = self.stdin_writer.lock();
-        writer.write_all(data)?;
-        writer.flush()
-    }
-
-    /// Take the last CWD reported via OSC 7, clearing it.
-    pub fn take_reported_cwd(&mut self) -> Option<String> {
-        self.reported_cwd.take()
-    }
 
     /// Extract a path from an OSC 7 escape sequence in a byte buffer.
     ///

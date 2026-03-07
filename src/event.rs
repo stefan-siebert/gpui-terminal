@@ -67,6 +67,9 @@ pub enum TerminalEvent {
     /// The terminal wants to load data from the clipboard.
     ClipboardLoad,
 
+    /// The terminal needs to write data back to the PTY (e.g. DSR response).
+    PtyWrite(String),
+
     /// The terminal process has exited.
     Exit,
 
@@ -147,8 +150,8 @@ impl EventListener for GpuiEventProxy {
             }
             // Ignore events we don't care about
             Event::MouseCursorDirty => {}
-            Event::PtyWrite(ref _data) => {
-                // This is handled internally by alacritty
+            Event::PtyWrite(data) => {
+                self.send(TerminalEvent::PtyWrite(data));
             }
             Event::ColorRequest(ref _index, ref _format) => {
                 // Color requests are not commonly used
