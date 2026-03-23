@@ -447,9 +447,19 @@ impl Osc7Scanner {
                 let path = &rest[slash_pos..];
                 // Percent-decode the path
                 let decoded = percent_decode(path);
-                if !decoded.is_empty() {
-                    return Some(decoded);
+                if decoded.is_empty() {
+                    return None;
                 }
+                // On Windows, strip leading / before drive letter (e.g. /C:\Users -> C:\Users)
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(stripped) = decoded.strip_prefix('/') {
+                        if stripped.len() >= 2 && stripped.as_bytes()[1] == b':' {
+                            return Some(stripped.to_string());
+                        }
+                    }
+                }
+                return Some(decoded);
             }
         }
         None
@@ -677,17 +687,12 @@ impl TerminalView {
                             let _ = osc7_event_tx.send(TerminalEvent::WorkingDirectory(path.clone()));
                         }
 
-                        // Process bytes and notify the view
-                        // Store detected CWD directly so observers fire immediately
+                        // Process bytes, store detected CWD, and notify
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             if let Some(path) = paths.into_iter().last() {
                                 view.last_reported_cwd = Some(path);
                             }
                             view.state.process_bytes(&bytes);
-                            // Scan for OSC 7 CWD reporting sequences
-                            if let Some(cwd) = Self::extract_osc7_path(&bytes) {
-                                view.last_reported_cwd = Some(cwd);
-                            }
                             cx.notify();
                         });
                         if result.is_err() {
@@ -1113,48 +1118,6 @@ impl TerminalView {
     /// Extract a path from an OSC 7 escape sequence in a byte buffer.
     ///
     /// OSC 7 format: `\x1b]7;file://HOST/PATH\x1b\\` or `\x1b]7;file://HOST/PATH\x07`
-    fn extract_osc7_path(bytes: &[u8]) -> Option<String> {
-        // Look for ESC ] 7 ; pattern
-        let marker = b"\x1b]7;";
-        let start = bytes.windows(marker.len()).position(|w| w == marker)?;
-        let url_start = start + marker.len();
-        let remaining = &bytes[url_start..];
-
-        // Find terminator: ST (\x1b\\) or BEL (\x07)
-        let url_end = remaining.iter().position(|&b| b == b'\x07' || b == b'\x1b')?;
-        let url = std::str::from_utf8(&remaining[..url_end]).ok()?;
-
-        // Parse file:// URL - extract path after hostname
-        let path_part = url.strip_prefix("file://")?;
-        // Skip hostname (everything up to the next /)
-        let path = if let Some(slash_pos) = path_part.find('/') {
-            &path_part[slash_pos..]
-        } else {
-            return None;
-        };
-
-        // URL-decode the path
-        Some(Self::url_decode(path))
-    }
-
-    /// Simple percent-decoding for file paths.
-    fn url_decode(input: &str) -> String {
-        let mut result = String::with_capacity(input.len());
-        let mut chars = input.bytes();
-        while let Some(b) = chars.next() {
-            if b == b'%' {
-                let hi = chars.next().and_then(|c| (c as char).to_digit(16));
-                let lo = chars.next().and_then(|c| (c as char).to_digit(16));
-                if let (Some(h), Some(l)) = (hi, lo) {
-                    result.push((h * 16 + l) as u8 as char);
-                }
-            } else {
-                result.push(b as char);
-            }
-        }
-        result
-    }
-
     /// Update the terminal configuration.
     ///
     /// This method updates the terminal's configuration, including font settings,
