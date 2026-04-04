@@ -1115,6 +1115,7 @@ impl TerminalView {
     }
 
 
+
     /// Extract a path from an OSC 7 escape sequence in a byte buffer.
     ///
     /// OSC 7 format: `\x1b]7;file://HOST/PATH\x1b\\` or `\x1b]7;file://HOST/PATH\x07`
