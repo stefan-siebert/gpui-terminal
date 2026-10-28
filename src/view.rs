@@ -1015,7 +1015,7 @@ impl TerminalView {
     /// Currently a placeholder for future scrollback support.
     fn on_scroll(
         &mut self,
-        _event: &ScrollWheelEvent,
+        _event: &ScrollEvent,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
@@ -1177,7 +1177,7 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_scroll(cx.listener(Self::on_scroll))
             .child(
                 canvas(
                     move |bounds, _window, _cx| bounds,
