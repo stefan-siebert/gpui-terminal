@@ -52,6 +52,7 @@ use crate::event::{GpuiEventProxy, TerminalEvent};
 use crate::input::keystroke_to_bytes;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{Edges, *};
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -592,6 +593,9 @@ pub struct TerminalView {
 
     /// Last working directory reported via OSC 7 (observable by parent views)
     last_reported_cwd: Option<String>,
+
+    /// What a screen reader calls the terminal; see [`Self::with_accessible_name`].
+    accessible_name: SharedString,
 }
 
 impl TerminalView {
@@ -729,7 +733,15 @@ impl TerminalView {
             exit_callback: None,
             directory_callback: None,
             last_reported_cwd: None,
+            accessible_name: "Terminal".into(),
         }
+    }
+
+    /// Set what a screen reader calls the terminal (default "Terminal"),
+    /// for an app that shows its UI in another language.
+    pub fn with_accessible_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.accessible_name = name.into();
+        self
     }
 
     /// Set a callback to be invoked when the terminal is resized.
@@ -1169,7 +1181,17 @@ impl Render for TerminalView {
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
 
+        // The grid is painted, so a screen reader sees nothing of it unless
+        // the focused element says what it is and what it shows. The text
+        // is read only while assistive technology listens: it walks the
+        // whole screen.
+        let screen_text = window.is_a11y_active().then(|| self.state.screen_text());
+
         div()
+            .id("terminal")
+            .role(Role::Terminal)
+            .aria_label(self.accessible_name.clone())
+            .when_some(screen_text, |terminal, text| terminal.aria_value(text))
             .size_full()
             .bg(rgb(0x1e1e1e))
             .track_focus(&self.focus_handle)

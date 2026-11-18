@@ -370,6 +370,35 @@ impl TerminalState {
     pub fn term_arc(&self) -> Arc<Mutex<Term<GpuiEventProxy>>> {
         Arc::clone(&self.term)
     }
+
+    /// The text the screen shows: one line per row, as the renderer paints
+    /// them, with blanks at the end of a row and empty rows at the bottom
+    /// left out.
+    ///
+    /// This is what a screen reader is handed as the terminal's value — the
+    /// grid is painted, so without it the terminal is an empty, named box.
+    pub fn screen_text(&self) -> String {
+        self.with_term(|term| {
+            use alacritty_terminal::index::{Column, Line, Point};
+            use alacritty_terminal::term::cell::Flags;
+
+            let grid = term.grid();
+            let mut lines: Vec<String> = (0..grid.screen_lines())
+                .map(|row| {
+                    let line: String = (0..grid.columns())
+                        .map(|col| &grid[Point::new(Line(row as i32), Column(col))])
+                        .filter(|cell| !cell.flags.contains(Flags::WIDE_CHAR_SPACER))
+                        .map(|cell| if cell.c == '\0' { ' ' } else { cell.c })
+                        .collect();
+                    line.trim_end().to_string()
+                })
+                .collect();
+            while lines.last().is_some_and(String::is_empty) {
+                lines.pop();
+            }
+            lines.join("\n")
+        })
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +432,17 @@ mod tests {
             // We can't easily test the exact content without more complex grid inspection
             assert!(grid.columns() == 80);
         });
+    }
+
+    #[test]
+    fn screen_text_reads_rows_as_painted() {
+        let (tx, _rx) = channel();
+        let event_proxy = GpuiEventProxy::new(tx);
+        let mut terminal = TerminalState::new(20, 5, event_proxy);
+
+        terminal.process_bytes(b"$ ls\r\na.txt   b.txt\r\n$ ");
+
+        assert_eq!(terminal.screen_text(), "$ ls\na.txt   b.txt\n$");
     }
 
     #[test]
